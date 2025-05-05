@@ -26,8 +26,10 @@ class Experiment:
                    qs: Union[np.ndarray, xp.ndarray],
                    Surfs: 'Surfaces',
                    intensity_param: float,
-                   rotation_axis: Union[np.ndarray, xp.ndarray],
-                   rotation_angles: Union[np.ndarray, xp.ndarray]) -> 'Experiment':
+                   rotation_axis: Union[np.ndarray, xp.ndarray] = None,
+                   rotation_angles: Union[np.ndarray, xp.ndarray] = None,
+                   rotation_matrices: Union[np.ndarray, xp.ndarray] = None,
+    ) -> 'Experiment':
         """
         Create Experiment instance from electron energy.
 
@@ -40,10 +42,13 @@ class Experiment:
             rotation_angles: Array of rotation angles in radians
         """
         k_i = cls._energy_to_wavevector(energy_kev)
-        return cls(k_i=k_i, qs=qs, Surfs=Surfs, 
+        return cls(k_i=k_i, 
+                   qs=qs, 
+                   Surfs=Surfs, 
                   intensity_param=intensity_param,
                   rotation_axis=rotation_axis, 
-                  rotation_angles=rotation_angles)
+                  rotation_angles=rotation_angles,
+                  rotation_matrices=rotation_matrices)
 
     @staticmethod
     def _energy_to_wavevector(energy_kev: float) -> Union[np.ndarray, xp.ndarray]:
@@ -60,12 +65,14 @@ class Experiment:
         qs: ndarray,
         Surfs: type[Surfaces],
         intensity_param: float,
-        rotation_axis: ndarray,
-        rotation_angles: ndarray,
+        rotation_axis: ndarray = None,
+        rotation_angles: ndarray = None,
+        rotation_matrices: ndarray = None,
     ):
         """
         
         """
+        
         self.k_i = k_i
         
         self.set_surfs(Surfs)
@@ -73,9 +80,16 @@ class Experiment:
         self.set_qs(qs)
         
         self.intensity_param = intensity_param
-    
-        self.set_rotation_axis(rotation_axis)
-        self.set_rotation_angles(rotation_angles)
+
+        if rotation_matrices is None and rotation_axis is None and rotation_angles is None:
+            raise ValueError("rotation_matrices must be provided if rotation_axis and rotation_angles are not provided")
+        elif rotation_matrices is not None and rotation_axis is None and rotation_angles is None:
+            self.set_rotation_matrices(rotation_matrices)
+        elif rotation_matrices is None and rotation_axis is not None and rotation_angles is not None:
+            self.set_rotation_axis(rotation_axis)
+            self.set_rotation_angles(rotation_angles)
+        else:
+            raise ValueError("rotation_matrices must be provided if rotation_axis and rotation_angles are not provided")
     
     def set_surfs(
         self,
@@ -87,9 +101,13 @@ class Experiment:
         self,
         qs,
     ):
-        self.qs_np = np.array(qs)
-        self.qs_xp = xp.array(qs)
-        
+        try:
+            self.qs_np = np.array(qs)
+            self.qs_xp = xp.array(qs)
+        except:
+            self.qs_np = qs.get()
+            self.qs_xp = qs
+            
         my_qs = np.transpose(self.qs_np, [len(self.qs_np.shape)-1, *np.arange(len(self.qs_np.shape)-1)])
         self.structure_factor = get_struct_factor(self.Surfs.material, my_qs)
         
@@ -114,6 +132,20 @@ class Experiment:
         self.k_is = xp.tensordot(self.rotation_matrices, 
                                  self.k_i, 
                                  axes = [[1],[0]])
+    
+    def set_rotation_matrices(
+        self,
+        rotation_matrices: ndarray,
+    ):
+        self.rotation_matrices = rotation_matrices
+
+        self.k_is = xp.tensordot(self.rotation_matrices, 
+                                 self.k_i, 
+                                 axes = [[1],[0]])
+
+        # TODO: set rotation axis and angles too
+        
+        
         
     def get_dark_field(
         self
@@ -282,6 +314,42 @@ class Experiment:
             return I_bf_projected, I_df_projected
         else:
             return I_bf_projected
+
+    def plot_df_phase_map(
+        self,
+        i_R = 0,
+        i_theta = 0,
+    ):
+        # (78, 128, 128, 1, 8)
+        my_I_df = self.I_df[i_theta,:,:, i_theta,:]
+        phase_factor = self.qs_np[:,0] + 1j*self.qs_np[:,1]
+
+        df_phase_map = xp.zeros((my_I_df.shape[0], my_I_df.shape[1]), dtype = xp.complex128)
+
+        for i in range(my_I_df.shape[2]):
+            my_I_df_phase = my_I_df[:,:,i] *phase_factor[i]
+
+            df_phase_map += my_I_df_phase
+        
+        amplitude = np.abs(df_phase_map)
+        phase = np.angle(df_phase_map)  # radians, from -pi to pi
+
+        # Normalize amplitude (optional, for better contrast)
+        amplitude = amplitude / np.max(amplitude)
+
+        # Build HSV image
+        hue = (phase + np.pi) / (2 * np.pi)  # map from [−π,π] to [0,1]
+        saturation = np.ones_like(hue)
+        value = amplitude
+
+        hsv_image = np.stack([hue, saturation, value], axis=-1)
+        rgb_image = matplotlib.colors.hsv_to_rgb(hsv_image)
+
+        fig, ax = plt.subplots(figsize=(8,8))
+        ax.imshow(rgb_image)
+        ax.set_title("Dark Field Phase Plot")
+
+        return fig, ax
 
     def plot_bf(
         self,

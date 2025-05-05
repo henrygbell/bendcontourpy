@@ -1,8 +1,8 @@
 import numpy as np
 import cupy as xp
 from ..utils.math_utils import get_rot_matrix_rodriguez, bezier_basis_change
-from ..surfaces import bezier_surface
-
+from ..surfaces import Bezier_Surfaces, Surfaces
+from ..experiment import Experiment
 
 
 class strain_free_solver:
@@ -46,6 +46,15 @@ class strain_free_solver:
         k_magnitude = xp.sqrt(2 * m_electron * E_electron_joule) / hbar / 1e10
         return k_magnitude * xp.array([0, 0, -1])  # Default direction -z
 
+    @staticmethod
+    def _wavevector_to_energy(k_i):
+        """Convert wavevector to electron energy."""
+        m_electron = 9.1093837e-31  # kg
+        hbar = 1.054571817e-34  # J s
+        k_magnitude = xp.linalg.norm(k_i)
+        E_electron_joule = k_magnitude**2 * hbar**2 *1e10 **2/ (2 * m_electron)
+        return E_electron_joule/1e3/1.60218e-19
+
     def __init__(
             self, 
             df_binary_images, 
@@ -58,6 +67,8 @@ class strain_free_solver:
             U, 
         ):
 
+        self.energy = strain_free_solver._wavevector_to_energy(k_i0)
+
         self.df_binary_images = df_binary_images
         self.qs_hkl = qs
         self.k_i0 = k_i0
@@ -66,11 +77,12 @@ class strain_free_solver:
         self.dy = dy
         self.U = U
         self.define_material(material)
+        self.bez_height_map = None
     
     def define_material(self, 
             material
         ):
-
+        self.bez_points = xp.array([])
         self.material = material
 
         B_real = xp.array((self.material.a1, 
@@ -81,7 +93,7 @@ class strain_free_solver:
         
         self.UB = 2*xp.pi*xp.linalg.inv(UB_real)
 
-        self.qs_xyz_plane = xp.einsum('ij, kj -> ik', self.qs_hkl, self.UB)
+        self.qs_xyz_plane = xp.einsum('ij, jk -> ik', self.qs_hkl, self.UB)
 
         qs_xyz_plane_norm = xp.linalg.norm(self.qs_xyz_plane, axis = 1)
 
@@ -266,6 +278,8 @@ class strain_free_solver:
             if num_cp is None:
                 raise ValueError("num_cp must be specified for bezier basis")
             
+            self.num_cp = num_cp
+
             self.build_constraints(weights_reg, weights_bc)
             u = xp.linspace(0, 1, self.df_binary_images.shape[1])
             v = xp.linspace(0, 1, self.df_binary_images.shape[2])
@@ -275,11 +289,92 @@ class strain_free_solver:
             b =  self.total_b
         
             if method == "lsqr":
-                sol = xp.linalg.lstsq(constraints, b, rcond = None)[0]
-                bez_height_map = (R @ sol).reshape((self.df_binary_images.shape[1],self.df_binary_images.shape[1]))
-                return bez_height_map
+                self.bez_points = xp.linalg.lstsq(constraints, b, rcond = None)[0]
+                self.bez_height_map = (R @ self.bez_points).reshape((self.df_binary_images.shape[1],self.df_binary_images.shape[1]))
+                return self.bez_height_map
             if method == "iterative":
                 pass
+    
+    def _get_surface(
+            self,
+            **kwargs,
+    ):
+        if self.bez_height_map is None:
+            raise ValueError("bez_height_map is not set")
+        
+        u = xp.linspace(0, 1, self.df_binary_images.shape[1])
+        v = xp.linspace(0, 1, self.df_binary_images.shape[1])
+
+        u, v = xp.meshgrid(u,v, indexing = "ij")
+
+        u_new = u 
+        v_new = v
+
+        X = (2*u_new - 1)*self.dx*self.df_binary_images.shape[1]/2 #(2*u - 1)*3.5 # strain field in X
+        Y = (2*v_new - 1)*self.dy*self.df_binary_images.shape[1]/2 # 0.03*xp.exp(-((u-0.5)**2 + (v-0.5)**2)/0.05)#
+        Z = self.bez_height_map - self.bez_height_map.mean() #0.05e-1*xp.sin(10*((u - 0.5)**2 - 2*(v-0.5)**3)) #3e-2*xp.exp(-((v-0.5)**2 + (u-0.5)**2)/0.05)
+
+        R1 = xp.array((X,Y,Z))
+
+        my_surfs_solved = Surfaces(R1, 
+                            u, 
+                            v, 
+                            np.pi/2, 
+                            np.pi/2, 
+                            self.material,
+                            U = self.U,
+                            **kwargs)
+        
+
+
+        # if self.bez_points.size == 0:
+        #     raise ValueError("bez_height_map is not set")
+        
+
+
+        # shape_bez = self.num_cp
+
+        # u = xp.linspace(0, 1, shape_bez)
+        # v = xp.linspace(0, 1, shape_bez)
+
+        # u, v = xp.meshgrid(u, v)
+
+        # x = 2*(u - 0.5)*self.df_binary_images.shape[1]*self.dx
+        # y = 2*(v - 0.5)*self.df_binary_images.shape[2]*self.dy
+
+        # control_points = xp.zeros((x.shape[0], x.shape[0], 3))
+        # control_points[:,:,0] = x[:,:]
+        # control_points[:,:,1] = y[:,:]
+        # control_points[:,:,2] = self.bez_points.reshape(shape_bez, shape_bez)
+
+        # self.bez_surface = Bezier_Surfaces(
+        #     control_points = control_points,
+        #     alpha = xp.pi/2, #hard coded, fix later
+        #     beta = xp.pi/2, #hard coded, fix later
+        #     material = self.material,
+        #     num_samples = self.df_binary_images.shape[1],
+        #     U = self.U,
+        #     **kwargs,
+        # )
+
+        return my_surfs_solved
+
+    def get_exp(
+        self,
+        intensity_param = 0.05,
+        **kwargs,
+    ):
+        surface =self._get_surface(**kwargs)
+
+        self.exp_solved = Experiment.from_energy(
+            self.energy,
+            self.qs_hkl,
+            surface,
+            intensity_param = intensity_param,
+            rotation_matrices = self.rotation_matrices,
+        )
+        return self.exp_solved
+        
         
 
         

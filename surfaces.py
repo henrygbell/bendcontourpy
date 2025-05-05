@@ -278,7 +278,7 @@ class Surfaces:
         
         cart_axis = 1
         
-        normals = -xp.cross(r_u, 
+        normals = xp.cross(r_u, 
                             r_v, 
                             axis = cart_axis)
         
@@ -289,9 +289,10 @@ class Surfaces:
         x_hat = r_u/self.x_range_0/self.du
         y_hat = r_v/self.y_range_0/self.dv
         z_hat = normals_normed
-        (3, 1, 3, 64, 64)
+        self.z_hat = z_hat
+        
         T = xp.array((x_hat, y_hat, z_hat))
-        print(T.shape)
+        
         
         TUB_real = xp.einsum("ijklm,in,no->jkolm", T, self.U, self.B_real0)
 
@@ -387,6 +388,36 @@ class Surfaces:
         ax_c[1].imshow(self.c_vec[i, 1, :,:].get())
         ax_c[2].set_title("z")
         ax_c[2].imshow(self.c_vec[i, 2, :,:].get())
+    
+    def visualize_vectors(self, i = 0, fig = None, ax = None):
+
+        if fig is None:
+            fig = plt.figure()
+        if ax is None:
+            ax = fig.add_subplot(projection = "3d")
+
+        scale = 1000
+
+        ax.plot_surface(self.R[i,0,:,:].get(), self.R[i,1,:,:].get(), self.R[i,2,:,:].get()*scale, alpha = 0.5)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+
+        a_vec = self.a_vec.get()
+        b_vec = self.b_vec.get()
+        c_vec = self.c_vec.get()
+
+        # c_vecs = ax.quiver(my_surfs.R[0,0,::10,::10].get(), my_surfs.R[0,1,::10,::10].get(), my_surfs.R[0,2,::10,::10].get()*1000, 
+        #                    scale*c_vec[0,0,::10,::10], scale*c_vec[0,1,::10,::10], c_vec[0,2,::10,::10], length = 1e-2, color = "blue")
+
+        b_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
+                        b_vec[0,0,5::10,5::10], b_vec[0,1,5::10,5::10], b_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "green", label = "b")
+
+        a_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
+                        a_vec[0,0,5::10,5::10], a_vec[0,1,5::10,5::10], a_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "red", label = "a")
+        
+        fig.legend()
 
 class Bezier_Surfaces(Surfaces):
     """
@@ -406,26 +437,23 @@ class Bezier_Surfaces(Surfaces):
     def __init__(
         self, 
         control_points: ndarray,
-        c: ndarray,
         alpha: ndarray,
         beta: ndarray,
-        a0: float,
-        b0: float,
         material,
         num_samples: int,
         width: float = 2*xp.pi/4/700,
+        U: ndarray = xp.diag(xp.ones(3)),
     ):  
         self.u_1d = xp.linspace(0, 1, num_samples)
         self.v_1d = xp.linspace(0, 1, num_samples)
         
-        self.c = c
         self.alpha = alpha
         self.beta = beta
-        self.a0 = a0
-        self.b0 = b0
+
         self.material = material
         self.width = width
-        
+        self.U = U
+
         self.set_control_points(control_points)
         
     def set_control_points(self, 
@@ -450,13 +478,11 @@ class Bezier_Surfaces(Surfaces):
             R_bez,
             self.u_1d,
             self.v_1d,
-            self.c,
             self.alpha,
             self.beta,
-            self.a0,
-            self.b0,
             self.material,
             width = self.width,
+            U = self.U,
         )
     
     def set_control_points_list(self,
