@@ -299,65 +299,65 @@ class strain_free_solver:
             self,
             **kwargs,
     ):
-        if self.bez_height_map is None:
-            raise ValueError("bez_height_map is not set")
-        
-        u = xp.linspace(0, 1, self.df_binary_images.shape[1])
-        v = xp.linspace(0, 1, self.df_binary_images.shape[1])
-
-        u, v = xp.meshgrid(u,v, indexing = "ij")
-
-        u_new = u 
-        v_new = v
-
-        X = (2*u_new - 1)*self.dx*self.df_binary_images.shape[1]/2 #(2*u - 1)*3.5 # strain field in X
-        Y = (2*v_new - 1)*self.dy*self.df_binary_images.shape[1]/2 # 0.03*xp.exp(-((u-0.5)**2 + (v-0.5)**2)/0.05)#
-        Z = self.bez_height_map - self.bez_height_map.mean() #0.05e-1*xp.sin(10*((u - 0.5)**2 - 2*(v-0.5)**3)) #3e-2*xp.exp(-((v-0.5)**2 + (u-0.5)**2)/0.05)
-
-        R1 = xp.array((X,Y,Z))
-
-        my_surfs_solved = Surfaces(R1, 
-                            u, 
-                            v, 
-                            np.pi/2, 
-                            np.pi/2, 
-                            self.material,
-                            U = self.U,
-                            **kwargs)
-        
-
-
-        # if self.bez_points.size == 0:
+        # if self.bez_height_map is None:
         #     raise ValueError("bez_height_map is not set")
         
+        # u = xp.linspace(0, 1, self.df_binary_images.shape[1])
+        # v = xp.linspace(0, 1, self.df_binary_images.shape[1])
+
+        # u, v = xp.meshgrid(u,v, indexing = "ij")
+
+        # u_new = u 
+        # v_new = v
+
+        # X = (2*u_new - 1)*self.dx*self.df_binary_images.shape[1]/2 #(2*u - 1)*3.5 # strain field in X
+        # Y = (2*v_new - 1)*self.dy*self.df_binary_images.shape[1]/2 # 0.03*xp.exp(-((u-0.5)**2 + (v-0.5)**2)/0.05)#
+        # Z = self.bez_height_map - self.bez_height_map.mean() #0.05e-1*xp.sin(10*((u - 0.5)**2 - 2*(v-0.5)**3)) #3e-2*xp.exp(-((v-0.5)**2 + (u-0.5)**2)/0.05)
+
+        # R1 = xp.array((X,Y,Z))
+
+        # my_surfs_solved = Surfaces(R1, 
+        #                     u, 
+        #                     v, 
+        #                     np.pi/2, 
+        #                     np.pi/2, 
+        #                     self.material,
+        #                     U = self.U,
+        #                     **kwargs)
+        
 
 
-        # shape_bez = self.num_cp
+        if self.bez_points.size == 0:
+            raise ValueError("bez_height_map is not set")
+        
 
-        # u = xp.linspace(0, 1, shape_bez)
-        # v = xp.linspace(0, 1, shape_bez)
 
-        # u, v = xp.meshgrid(u, v)
+        shape_bez = self.num_cp
 
-        # x = 2*(u - 0.5)*self.df_binary_images.shape[1]*self.dx
-        # y = 2*(v - 0.5)*self.df_binary_images.shape[2]*self.dy
+        u = xp.linspace(0, 1, shape_bez)
+        v = xp.linspace(0, 1, shape_bez)
 
-        # control_points = xp.zeros((x.shape[0], x.shape[0], 3))
-        # control_points[:,:,0] = x[:,:]
-        # control_points[:,:,1] = y[:,:]
-        # control_points[:,:,2] = self.bez_points.reshape(shape_bez, shape_bez)
+        u, v = xp.meshgrid(u, v, indexing = "ij")
 
-        # self.bez_surface = Bezier_Surfaces(
-        #     control_points = control_points,
-        #     alpha = xp.pi/2, #hard coded, fix later
-        #     beta = xp.pi/2, #hard coded, fix later
-        #     material = self.material,
-        #     num_samples = self.df_binary_images.shape[1],
-        #     U = self.U,
-        #     **kwargs,
-        # )
+        x = 2*(u - 0.5)*self.df_binary_images.shape[1]*self.dx/2
+        y = 2*(v - 0.5)*self.df_binary_images.shape[2]*self.dy/2
 
-        return my_surfs_solved
+        control_points = xp.zeros((x.shape[0], x.shape[0], 3))
+        control_points[:,:,0] = x[:,:]
+        control_points[:,:,1] = y[:,:]
+        control_points[:,:,2] = self.bez_points.reshape(shape_bez, shape_bez)
+
+        self.bez_surface = Bezier_Surfaces(
+            control_points = control_points,
+            alpha = xp.pi/2, #hard coded, fix later
+            beta = xp.pi/2, #hard coded, fix later
+            material = self.material,
+            num_samples = self.df_binary_images.shape[1],
+            U = self.U,
+            **kwargs,
+        )
+
+        return self.bez_surface
 
     def get_exp(
         self,

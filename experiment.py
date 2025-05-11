@@ -72,7 +72,7 @@ class Experiment:
         """
         
         """
-        
+
         self.k_i = k_i
         
         self.set_surfs(Surfs)
@@ -169,7 +169,7 @@ class Experiment:
         
         I = xp.abs(xp.array(self.structure_factor))**2
         
-        self.I_bf = (1 - self.intensity_param*xp.sum(I_df*I,axis = -1)).transpose((3,0,1,2))
+        self.I_bf = (1 - xp.sum(self.intensity_param*I_df*I, axis = -1)).transpose((3,0,1,2))
 
         return I_df, self.I_bf
     

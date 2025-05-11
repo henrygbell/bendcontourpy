@@ -1,6 +1,6 @@
 import numpy as np
 import cupy as xp
-from .utils.math_utils import bezier_surface, bernstein_poly
+from .utils.math_utils import bezier_surface, bernstein_poly, bezier_basis_change
 from numpy import ndarray
 import matplotlib.pyplot as plt
 
@@ -273,21 +273,21 @@ class Surfaces:
         self.get_UB()
     
     def get_UB(self):
-        r_u, r_v = xp.gradient(self.R, 
+        self.r_u, self.r_v = xp.gradient(self.R, 
                                axis = (-2,-1))
         
         cart_axis = 1
         
-        normals = xp.cross(r_u, 
-                            r_v, 
+        normals = xp.cross(self.r_u, 
+                            self.r_v, 
                             axis = cart_axis)
         
         normals_normed = xp.einsum("...jkl,...kl->...jkl", 
                                    normals,
                                    1/xp.linalg.norm(normals, axis = cart_axis))
 
-        x_hat = r_u/self.x_range_0/self.du
-        y_hat = r_v/self.y_range_0/self.dv
+        x_hat = self.r_u/self.x_range_0/self.du
+        y_hat = self.r_v/self.y_range_0/self.dv
         z_hat = normals_normed
         self.z_hat = z_hat
         
@@ -351,6 +351,15 @@ class Surfaces:
         
         self.UB = UB.transpose([1,2,3,4,0])
     
+    def get_strain_tensor(self):
+        (2, 1, 3, 128, 128)
+        #bez_surf.get_strain_tensor()
+        R_strain = xp.array((self.r_u, self.r_v))
+        print(R_strain.shape)
+        eps = xp.einsum("isklm, jsklm->sijlm", R_strain, R_strain)
+
+        return eps
+
     def test_image_axis(self, i = 0):
         fig, axR = plt.subplots(1,3)
         
@@ -507,3 +516,26 @@ class Bezier_Surfaces(Surfaces):
         control_points = control_points_list.reshape((num_r, num_c,num_c,3))
         
         self.set_control_points(control_points)
+
+
+    def updown_sample_cp(self, cp_num):
+        basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
+        basis_R_cp = xp.array(bezier_basis_change(self.u_1d, self.v_1d, self.num_c, self.num_c))
+
+        new_control_points = xp.zeros((cp_num, cp_num, 3))
+
+        for i in range(3): #xyz
+            xyz = xp.array(self.control_points[0,:,:,i])
+            xyz_flat = xyz.flatten()
+
+            b = basis_R_cp @ xyz_flat
+
+            A = basis_R_cp_prime
+
+            xyz_new = xp.linalg.lstsq(A, b, rcond = None)[0]
+
+            new_control_points[:,:,i] = xyz_new.reshape((cp_num, cp_num))
+        return new_control_points
+
+
+        

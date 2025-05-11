@@ -12,9 +12,11 @@ from .optimization import (
 from .visualization import (
     plot_surfaces,
     plot_bf,
-    plot_df
+    plot_df,
+    add_colorbar,
+    plot_df_phase_image,
 )
-from .utils import get_rot_matrix_rodriguez
+from .utils import get_rot_matrix_rodriguez, cross_correlation_registration
 
 __all__ = [
     'Surfaces',
@@ -27,6 +29,9 @@ __all__ = [
     'plot_df',
     'strain_free_solver',
     'get_rot_matrix_rodriguez',
+    'cross_correlation_registration',
+    "add_colorbar",
+    "plot_df_phase_image",
 ]
 
 __version__ = '0.1.0'
