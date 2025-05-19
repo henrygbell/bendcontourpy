@@ -349,8 +349,8 @@ class strain_free_solver:
 
         self.bez_surface = Bezier_Surfaces(
             control_points = control_points,
-            alpha = xp.pi/2, #hard coded, fix later
-            beta = xp.pi/2, #hard coded, fix later
+            # alpha = xp.pi/2, #hard coded, fix later
+            # beta = xp.pi/2, #hard coded, fix later
             material = self.material,
             num_samples = self.df_binary_images.shape[1],
             U = self.U,

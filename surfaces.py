@@ -207,8 +207,6 @@ class Surfaces:
         R: ndarray,
         u: ndarray,
         v: ndarray,
-        alpha: ndarray,
-        beta: ndarray,
         material,
         width: float = 2*xp.pi/4/700,
         U: ndarray = xp.diag(xp.ones(3)), # the
@@ -225,16 +223,15 @@ class Surfaces:
         
         if len(u.shape) == 1:
             self.u, self.v = xp.meshgrid(u, v)
+            self.u_1d = u
+            self.v_1d = v
         if len(u.shape) == 2:
             self.u = u
             self.v = v
-            
+            self.u_1d = u[:,0]
+            self.v_1d = v[0,:]
 
         self.c = np.linalg.norm(material.a3)
-        
-        self.alpha = alpha
-      
-        self.beta = beta
         
         self.x_range_0 = R[:, 0].max() - R[:, 0].min()
         self.y_range_0 = R[:, 1].max() - R[:, 1].min()
@@ -398,6 +395,24 @@ class Surfaces:
         ax_c[2].set_title("z")
         ax_c[2].imshow(self.c_vec[i, 2, :,:].get())
     
+    def get_cps(self, cp_num):
+        basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
+
+        new_control_points = xp.zeros((cp_num, cp_num, 3))
+
+        for i in range(3): #xyz
+            b = self.R[0, i].flatten()
+            # print(b.shape)
+
+            A = basis_R_cp_prime
+            # print(A.shape)
+
+            xyz_new = xp.linalg.lstsq(A, b, rcond = None)[0]
+
+            new_control_points[:,:,i] = xyz_new.reshape((cp_num, cp_num))
+        return new_control_points
+
+    
     def visualize_vectors(self, i = 0, fig = None, ax = None):
 
         if fig is None:
@@ -446,8 +461,6 @@ class Bezier_Surfaces(Surfaces):
     def __init__(
         self, 
         control_points: ndarray,
-        alpha: ndarray,
-        beta: ndarray,
         material,
         num_samples: int,
         width: float = 2*xp.pi/4/700,
@@ -455,9 +468,6 @@ class Bezier_Surfaces(Surfaces):
     ):  
         self.u_1d = xp.linspace(0, 1, num_samples)
         self.v_1d = xp.linspace(0, 1, num_samples)
-        
-        self.alpha = alpha
-        self.beta = beta
 
         self.material = material
         self.width = width
@@ -487,8 +497,6 @@ class Bezier_Surfaces(Surfaces):
             R_bez,
             self.u_1d,
             self.v_1d,
-            self.alpha,
-            self.beta,
             self.material,
             width = self.width,
             U = self.U,
