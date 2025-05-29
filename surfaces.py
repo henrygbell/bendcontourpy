@@ -195,12 +195,11 @@ class Surfaces:
         u (ndarray): First parameter of surface parameterization.
         v (ndarray): Second parameter of surface parameterization.
         c (ndarray): Excitation error parameter.
-        alpha (ndarray): First rotation angle in radians.
-        beta (ndarray): Second rotation angle in radians.
         a0 (float): First lattice parameter in real space.
         b0 (float): Second lattice parameter in real space.
         material: Crystal structure object containing material properties.
         width (float, optional): Width parameter for diffraction intensity. Defaults to 2*π/4/700.
+        dalpha (float, optional): 
     """
     def __init__(
         self, 
@@ -209,7 +208,9 @@ class Surfaces:
         v: ndarray,
         material,
         width: float = 2*xp.pi/4/700,
-        U: ndarray = xp.diag(xp.ones(3)), # the
+        U: ndarray = xp.diag(xp.ones(3)), 
+        dalpha = 0,
+        dbeta = 0,
     ):
         """
         Initialize the Surfaces class.
@@ -218,11 +219,10 @@ class Surfaces:
             R (ndarray): Surface coordinates in real space with shape (num_surfaces, 3, height, width).
             u (ndarray): First parameter of surface parameterization.
             v (ndarray): Second parameter of surface parameterization.
-        
         """
         
         if len(u.shape) == 1:
-            self.u, self.v = xp.meshgrid(u, v)
+            self.u, self.v = xp.meshgrid(u, v, indexing = "ij")
             self.u_1d = u
             self.v_1d = v
         if len(u.shape) == 2:
@@ -230,6 +230,29 @@ class Surfaces:
             self.v = v
             self.u_1d = u[:,0]
             self.v_1d = v[0,:]
+        
+        alpha0 = np.arccos(np.dot(material.a1, material.a3)/(np.linalg.norm(material.a1)*np.linalg.norm(material.a3)))
+        beta0 = np.arccos(np.dot(material.a2, material.a3)/(np.linalg.norm(material.a2)*np.linalg.norm(material.a3)))
+        
+        if type(dalpha) == float or type(dalpha) == int:
+            self.dalpha = xp.ones_like(self.u)*dalpha
+        else:
+            if dalpha.ndim == 0:
+                self.dalpha = xp.ones_like(self.u)*dalpha
+            else:
+                self.dalpha = dalpha
+        
+        self.alpha = alpha0 + self.dalpha
+        
+        if type(dbeta) == float or type(dbeta) == int:
+            self.dbeta = xp.ones_like(self.u)*dbeta
+        else:
+            if dbeta.ndim == 0:
+                self.dbeta = xp.ones_like(self.u)*dbeta
+            else:
+                self.dbeta = dbeta
+        
+        self.beta = beta0 + self.dbeta
 
         self.c = np.linalg.norm(material.a3)
         
@@ -254,6 +277,8 @@ class Surfaces:
         self.B_recip0 = 2*xp.pi*xp.linalg.inv(self.B_real0)
 
         self.set_R(R)
+    
+    
     
     def set_width(self, width):
         self.width = width
@@ -297,32 +322,47 @@ class Surfaces:
         self.b_vec = TUB_real[:,:,1,:,:]
         self.c_vec = TUB_real[:,:,2,:,:]
         
-        # a_len = xp.linalg.norm(self.a_vec,
-        #                        axis = cart_axis)
-        
-        # b_len = xp.linalg.norm(self.b_vec,
-        #                        axis = cart_axis)
-        
-        # gamma_cos = xp.einsum("...ijk,...ijk->...jk", 
-        #                       a_hat, 
-        #                       b_hat)
-        # det = a_len*b_len*(1 - gamma_cos**2)
-        
-        # A1_inv = xp.array(((self.b0*xp.ones_like(gamma_cos), 
-        #                     -b_len*gamma_cos), 
-        #                    (-self.a0*gamma_cos, a_len*xp.ones_like(gamma_cos))))/det
-        
-        # v1 = self.c*xp.array((xp.cos(self.beta), xp.cos(self.alpha)))
-        
-        # x, y = xp.einsum("ij...,j...->i...", 
-        #                  A1_inv, 
-        #                  v1)
-        
-        # z = xp.sqrt(self.c**2 - (x**2 * a_len**2 + y**2 * b_len**2 + x*y*a_len*b_len*gamma_cos))
-        
-        # self.c_vec = xp.einsum("i...jk,i...ljk->...ljk",
-        #                   xp.array((x, y, z)),
-        #                   xp.array((self.a_vec, self.b_vec, normals_normed))) 
+        if (self.dalpha != 0).any() or (self.dbeta != 0).any(): # compute c given alpha and beta if they are nonzero
+            a_hat = self.a_vec/xp.linalg.norm(self.a_vec, axis = 1, keepdims = True)
+            b_hat = self.b_vec/xp.linalg.norm(self.b_vec, axis = 1, keepdims = True)
+            n_hat = self.c_vec/xp.linalg.norm(self.c_vec, axis = 1, keepdims = True)
+            
+            cos_gamma = xp.einsum("ijkl,ijkl->ikl", a_hat, b_hat)
+            
+            A_inv = 1/(1-cos_gamma**2)*xp.array(((xp.ones_like(cos_gamma), -cos_gamma), 
+                                                 (-cos_gamma, xp.ones_like(cos_gamma))))
+            
+            cos_alpha_beta = xp.array((xp.cos(self.alpha), xp.cos(self.beta)))
+            
+            c_a, c_b = xp.einsum("ij...,j...->i...", A_inv, cos_alpha_beta)
+            
+            c_n = xp.sqrt(1 - c_a**2 - c_b**2 - 2*c_a*c_b*cos_gamma)
+            
+            self.c_vec = a_hat*c_a + b_hat*c_b + n_hat*c_n
+            
+            self.c_vec = self.c0*self.c_vec/xp.linalg.norm(self.c_vec, axis = 1, keepdims = True)
+            
+            # # orthonormal basis e123
+            # e1 = a_hat
+            # proj = xp.einsum("ij...,ij...->i...", b_hat, e1)
+            # e2 = b_hat - proj[:,None]*e1
+            # e2 /= xp.linalg.norm(e2, axis = 1)
+            # e3 = xp.cross(e1, e2, axis = 1)
+            
+            # cross_ab_norm = xp.linalg.norm(xp.cross(a_hat, b_hat, axis = 1), axis = 1)
+            # dot_ab = xp.einsum("ijkl,ijkl->ikl", a_hat, b_hat)
+            
+            # #get c in that basis
+            # c1 = self.c0 * xp.cos(self.beta)[None]
+            # c2 = self.c0 * (xp.cos(self.alpha) - xp.cos(self.beta) * dot_ab) / cross_ab_norm
+            
+            # c3_sq = self.c0**2 - c1**2 - c2**2
+            # c3 = xp.sqrt(xp.clip(c3_sq, 0, None))
+            
+            # #back to cartesian coordinates
+            # self.c_vec =  e1 * c1 + e2 * c2 + e3 * c3
+            
+            TUB_real[:,:,2,:,:] = self.c_vec
         
         V = xp.einsum("...jkl,...jkl->...kl", 
                       xp.cross(self.b_vec, self.c_vec, axis = cart_axis),
@@ -349,13 +389,19 @@ class Surfaces:
         self.UB = UB.transpose([1,2,3,4,0])
     
     def get_strain_tensor(self):
-        (2, 1, 3, 128, 128)
+
         #bez_surf.get_strain_tensor()
-        R_strain = xp.array((self.r_u, self.r_v))
-        print(R_strain.shape)
+        R_strain = xp.array((self.r_u/self.du/self.x_range_0, self.r_v/self.dv/self.y_range_0))
         eps = xp.einsum("isklm, jsklm->sijlm", R_strain, R_strain)
 
         return eps
+
+    def get_strain_tensor_relative(self):
+        eps = self.get_strain_tensor()
+        
+        # get strain tensor of flat surface
+        eps_flat = xp.diag(xp.ones(2))[None, :,:,None, None] #identity matrix across surface!
+        return 1/2*(eps - eps_flat)
 
     def test_image_axis(self, i = 0):
         fig, axR = plt.subplots(1,3)
@@ -484,13 +530,23 @@ class Bezier_Surfaces(Surfaces):
             self.control_points = control_points
             
         assert self.control_points.shape[1] == self.control_points.shape[2]
-        assert self.control_points.shape[3] == 3
         
         self.num_c = control_points.shape[1]
         
         R_bez = bezier_surface(self.u_1d,
                                self.v_1d, 
                                self.control_points)
+        if R_bez.shape[1] >= 4:
+            dalpha = R_bez[0,3,:,:]
+            dbeta = R_bez[0,4,:,:]
+            
+            R_bez = R_bez[:,:3,:,:]
+        else:
+            dalpha = 0
+            dbeta = 0
+        
+        # if self.control_points.shape[3] >= 4:
+        #     R_bez[:,:]
         
         Surfaces.__init__(
             self, 
@@ -500,6 +556,8 @@ class Bezier_Surfaces(Surfaces):
             self.material,
             width = self.width,
             U = self.U,
+            dalpha=dalpha,
+            dbeta=dbeta,
         )
     
     def set_control_points_list(self,
