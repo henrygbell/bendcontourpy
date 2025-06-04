@@ -211,6 +211,7 @@ class Surfaces:
         U: ndarray = xp.diag(xp.ones(3)), 
         dalpha = 0,
         dbeta = 0,
+        reference_config = None,
     ):
         """
         Initialize the Surfaces class.
@@ -220,6 +221,8 @@ class Surfaces:
             u (ndarray): First parameter of surface parameterization.
             v (ndarray): Second parameter of surface parameterization.
         """
+        
+        self.reference_config = reference_config
         
         if len(u.shape) == 1:
             self.u, self.v = xp.meshgrid(u, v, indexing = "ij")
@@ -256,8 +259,8 @@ class Surfaces:
 
         self.c = np.linalg.norm(material.a3)
         
-        self.x_range_0 = R[:, 0].max() - R[:, 0].min()
-        self.y_range_0 = R[:, 1].max() - R[:, 1].min()
+        # self.x_range_0 = R[0].max() - R[0].min()
+        # self.y_range_0 = R[1].max() - R[1].min()
         
         self.du = xp.abs(self.u[1,1] - self.u[0,0])
         self.dv = xp.abs(self.v[1,1] - self.v[0,0])
@@ -307,13 +310,20 @@ class Surfaces:
         normals_normed = xp.einsum("...jkl,...kl->...jkl", 
                                    normals,
                                    1/xp.linalg.norm(normals, axis = cart_axis))
-
-        x_hat = self.r_u/self.x_range_0/self.du
-        y_hat = self.r_v/self.y_range_0/self.dv
+        if self.reference_config is not None:
+            self.x_hat = self.r_u/self.du/self.reference_config['x_range']
+            self.y_hat = self.r_v/self.dv/self.reference_config['y_range']
+        else:
+            self.x_hat = self.r_u/self.du
+            self.y_hat = self.r_v/self.dv
+            
+            self.x_hat /= xp.linalg.norm(self.x_hat, axis = 1, keepdims = True)
+            self.y_hat /= xp.linalg.norm(self.y_hat, axis = 1, keepdims = True)
+        
         z_hat = normals_normed
         self.z_hat = z_hat
         
-        T = xp.array((x_hat, y_hat, z_hat))
+        T = xp.array((self.x_hat, self.y_hat, z_hat))
         
         
         TUB_real = xp.einsum("ijklm,in,no->jkolm", T, self.U, self.B_real0)
@@ -391,7 +401,7 @@ class Surfaces:
     def get_strain_tensor(self):
 
         #bez_surf.get_strain_tensor()
-        R_strain = xp.array((self.r_u/self.du/self.x_range_0, self.r_v/self.dv/self.y_range_0))
+        R_strain = xp.array((self.x_hat, self.y_hat))
         eps = xp.einsum("isklm, jsklm->sijlm", R_strain, R_strain)
 
         return eps
@@ -511,6 +521,7 @@ class Bezier_Surfaces(Surfaces):
         num_samples: int,
         width: float = 2*xp.pi/4/700,
         U: ndarray = xp.diag(xp.ones(3)),
+        reference_config = None,
     ):  
         self.u_1d = xp.linspace(0, 1, num_samples)
         self.v_1d = xp.linspace(0, 1, num_samples)
@@ -518,6 +529,8 @@ class Bezier_Surfaces(Surfaces):
         self.material = material
         self.width = width
         self.U = U
+        
+        self.reference_config = reference_config
 
         self.set_control_points(control_points)
         
@@ -558,6 +571,7 @@ class Bezier_Surfaces(Surfaces):
             U = self.U,
             dalpha=dalpha,
             dbeta=dbeta,
+            reference_config = self.reference_config,
         )
     
     def set_control_points_list(self,

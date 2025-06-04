@@ -7,7 +7,8 @@ from .experiment import Experiment
 from .optimization import (
     define_cost_function_surface,
     simulated_annealing,
-    strain_free_solver
+    strain_free_solver,
+    OptimizerFramework,
 )
 from .visualization import (
     plot_surfaces,
@@ -32,6 +33,7 @@ __all__ = [
     'cross_correlation_registration',
     "add_colorbar",
     "plot_df_phase_image",
+    "OptimizerFramework",
 ]
 
 __version__ = '0.1.0'

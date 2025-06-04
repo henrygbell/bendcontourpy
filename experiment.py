@@ -512,7 +512,7 @@ class Experiment:
         ax = np.array(ax).flatten()
         for i in range(num_theta):
             ax[i].imshow(self.I_bf[i_R, i].get(), vmax = 1, vmin = 0)
-            ax[i].set_title(fr"$\theta$ = {np.round(self.rotation_angles[i]*180/np.pi, 2)}$^\circ$")
+            # ax[i].set_title(fr"$\theta$ = {np.round(self.rotation_angles[i]*180/np.pi, 2)}$^\circ$")
     
 class Apertures:
     def __init__(

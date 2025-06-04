@@ -79,10 +79,11 @@ def bezier_basis_change(u, v, n, m):
         R_flatter: basis change matrix from control points to the image of size (k*l)x(n*m)
     """
     
-    B_u = bernstein_poly(n-1, u)
-    B_v = bernstein_poly(m-1, v)
+    B_u = bernstein_poly(n - 1, u)
+    B_v = bernstein_poly(m - 1, v)
 
     R = xp.einsum("ij,km->ikjm", B_u, B_v)
     
     R_flatter = R.reshape((-1, n*m))
     return R_flatter
+
