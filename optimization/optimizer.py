@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import h5py
 import os
 import datetime
+from .simulated_annealing import SimulatedAnnealingOptimizer
+from tqdm import tqdm
 
 
 def get_exp_surface(param_dict, info_dict):
@@ -70,6 +72,7 @@ class OptimizerFramework:
         }
         data: optional, e.g., images or other input used in the cost function
         """
+        self.H = None
         self.param_dict = param_dict
         self.data_info = data_info
         self.settings = settings
@@ -338,7 +341,7 @@ class OptimizerFramework:
                           callback = callback,
                           options = options,
                           )
-        self.optimized_result = result
+        self.optimized_result = result.x
         return result
         
     
@@ -416,17 +419,121 @@ class OptimizerFramework:
     def get_result(self):
         if self.optimized_result is None:
             raise RuntimeError("No optimization run yet.")
-        return self._reconstruct_full_params(self.free_names, self.optimized_result.x)
+        return self._reconstruct_full_params(self.free_names, self.optimized_result)
     
     def get_result_objects(self):
         params = self.get_result()
         
         return get_exp_surface(params, self.data_info)
-        
     
+    def optimize_sa(self, initial_temp=None, max_iterations=1000, cooling_schedule=None, verbose=None):
+        """
+        Use simulated annealing for optimization with individual step sizes for parameters.
+        
+        Parameters:
+        -----------
+        initial_temp : float
+            Initial temperature for the annealing process
+        max_iterations : int
+            Maximum number of iterations
+        cooling_schedule : callable, optional
+            Function to calculate temperature given fraction and initial temperature
+        verbose : bool, optional
+            Whether to show progress. Defaults to self.settings['verbose'] if not specified.
+        
+        Returns:
+        --------
+        dict
+            Optimization results including best parameters and cost history
+        """
+        self.free_names, x0, bounds = self._unpack_params()
+        
+        # Set verbosity
+        if verbose is None:
+            verbose = self.settings.get('verbose', False)
+        
+        # Prepare parameter dictionary with dp values
+        sa_param_dict = {}
+        for name, param in self.param_dict.items():
+            sa_param = param.copy()
+            
+            # Set default step size if not specified
+            if "dp" not in sa_param:
+                if name == "control_points_update_z":
+                    sa_param["dp"] = 0.02  # Default for height updates
+                elif "control_points_update" in name:
+                    sa_param["dp"] = 0.005  # Default for xy updates
+                elif name == "theta_lattice" or name == "theta_alpha":
+                    sa_param["dp"] = np.deg2rad(2)  # Default for angles: 2 degrees
+                elif name == "width" or name == "intensity_param":
+                    sa_param["dp"] = param["value"] * 0.1  # 10% of current value
+                else:
+                    # General case: 5% of range or 1% of value
+                    if "bounds" in param and param["bounds"] is not None:
+                        sa_param["dp"] = (param["bounds"][1] - param["bounds"][0]) * 0.05
+                    else:
+                        sa_param["dp"] = max(abs(param["value"]) * 0.01, 0.01)
+                        
+            sa_param_dict[name] = sa_param
+        
+        # Create cost function adapter
+        def cost_adapter(values_dict):
+            """Convert values dict to params for _wrapped_cost"""
+            # Reconstruct parameter vector from values dict
+            params = []
+            for name in self.free_names:
+                param_value = values_dict[name]
+                if hasattr(param_value, 'flatten'):
+                    params.extend(param_value.flatten())
+                else:
+                    params.append(param_value)
+            return self._wrapped_cost(np.array(params))
+        
+        # Create simulated annealing optimizer
+        sa_optimizer = SimulatedAnnealingOptimizer(
+            param_dict=sa_param_dict,
+            cost_function=cost_adapter,
+            verbose=verbose
+        )
+        
+        # Track optimization progress
+        def callback(iteration, params, cost, temp):
+            if self.settings.get("track_cost_function", True):
+                if not hasattr(self, "cost_function_history"):
+                    self.cost_function_history = []
+                self.cost_function_history.append(cost)
+        
+        # Run optimization
+        result = sa_optimizer.optimize(
+            initial_temp=initial_temp,
+            max_iterations=max_iterations,
+            cooling_schedule=cooling_schedule,
+            callback=callback
+        )
+        
+        # Update parameters with best result
+        for name, value in result['best_params'].items():
+            if not self.param_dict[name]["Fixed"]:
+                self.param_dict[name]["value"] = value
+        
+        # Create a result object similar to scipy.optimize.minimize
+        result =  {
+            'x': self._unpack_params()[1],  # We don't use this directly
+            'fun': result['best_cost'],
+            'success': True,
+            'message': "Simulated annealing completed",
+            'nfev': max_iterations,
+            'nit': max_iterations,
+            'status': 0
+        }
+        self.optimized_result = self._unpack_params()[1]
+        
+        return result
+        
     def plot_result(self):
-        params = self._reconstruct_full_params(self.free_names, self.optimized_result.x)
+        params = self._reconstruct_full_params(self.free_names, self.optimized_result)
         I_df, I_bf = self.get_bf_df(params)
+        
         
         num_imgs = self.data_info["BF_data"].shape[0]
         
@@ -542,3 +649,224 @@ class OptimizerFramework:
         
         print(f"Results saved to {os.path.abspath(filename)}")
         return os.path.abspath(filename)
+
+
+    def calculate_hessian(self, params=None, step_size=1e-5, use_central=True):
+        """
+        Calculate the Hessian matrix of the cost function at the given parameters.
+        
+        The Hessian is a square matrix of second-order partial derivatives that 
+        describes the local curvature of the cost function. It can be used for
+        uncertainty estimation, identifying parameter correlations, and improving
+        optimization methods.
+        
+        Parameters:
+        -----------
+        params : ndarray, optional
+            Parameter values at which to calculate the Hessian.
+            If None, uses current optimized parameters.
+        step_size : float, optional
+            Step size for finite difference approximation.
+        use_central : bool, optional
+            Whether to use central difference (more accurate but 2x evaluations)
+            
+        Returns:
+        --------
+        tuple : (hessian, parameter_names, eigenvalues, eigenvectors)
+            - hessian: ndarray - The Hessian matrix
+            - parameter_names: list - Names of parameters in Hessian rows/columns
+            - eigenvalues: ndarray - Eigenvalues of the Hessian
+            - eigenvectors: ndarray - Eigenvectors of the Hessian
+        """
+        # Get free parameter names and current values
+        free_names, current_params, _ = self._unpack_params()
+        n_params = len(current_params)
+        
+        # Use provided parameters or current parameters
+        if params is not None:
+            p = np.array(params)
+        else:
+            p = np.array(current_params)
+        
+        # Evaluate cost function at current parameters
+        f0 = self._wrapped_cost(p)
+        
+        # Initialize Hessian matrix
+        H = np.zeros((n_params, n_params))
+        
+        # Calculate Hessian using finite differences
+        if use_central:
+            # Central difference method (more accurate)
+            for i in tqdm(range(n_params)):
+                # Step in the ith direction
+                p_plus_i = p.copy()
+                p_minus_i = p.copy()
+                p_plus_i[i] += step_size
+                p_minus_i[i] -= step_size
+                
+                # Evaluate f(p + step*e_i) and f(p - step*e_i)
+                f_plus_i = self._wrapped_cost(p_plus_i)
+                f_minus_i = self._wrapped_cost(p_minus_i)
+                
+                # Second derivative along diagonal
+                H[i, i] = (f_plus_i - 2*f0 + f_minus_i) / (step_size**2)
+                
+                # Off-diagonal elements (mixed partials)
+                for j in range(i+1, n_params):
+                    # Step in both i and j directions
+                    p_plus_i_plus_j = p.copy()
+                    p_plus_i_minus_j = p.copy()
+                    p_minus_i_plus_j = p.copy()
+                    p_minus_i_minus_j = p.copy()
+                    
+                    p_plus_i_plus_j[i] += step_size
+                    p_plus_i_plus_j[j] += step_size
+                    
+                    p_plus_i_minus_j[i] += step_size
+                    p_plus_i_minus_j[j] -= step_size
+                    
+                    p_minus_i_plus_j[i] -= step_size
+                    p_minus_i_plus_j[j] += step_size
+                    
+                    p_minus_i_minus_j[i] -= step_size
+                    p_minus_i_minus_j[j] -= step_size
+                    
+                    # Calculate mixed partial derivative
+                    f_plus_i_plus_j = self._wrapped_cost(p_plus_i_plus_j)
+                    f_plus_i_minus_j = self._wrapped_cost(p_plus_i_minus_j)
+                    f_minus_i_plus_j = self._wrapped_cost(p_minus_i_plus_j)
+                    f_minus_i_minus_j = self._wrapped_cost(p_minus_i_minus_j)
+                    
+                    H[i, j] = (f_plus_i_plus_j - f_plus_i_minus_j - f_minus_i_plus_j + f_minus_i_minus_j) / (4 * step_size**2)
+                    H[j, i] = H[i, j]  # Hessian is symmetric
+        else:
+            # Forward difference method (less accurate but faster)
+            # Calculate gradients at p and p + step*e_j
+            gradients = []
+            gradient_p = np.zeros(n_params)
+            
+            # Calculate gradient at p
+            for i in range(n_params):
+                p_plus_i = p.copy()
+                p_plus_i[i] += step_size
+                gradient_p[i] = (self._wrapped_cost(p_plus_i) - f0) / step_size
+            
+            # Calculate gradients at p + step*e_j for all j
+            for j in range(n_params):
+                p_plus_j = p.copy()
+                p_plus_j[j] += step_size
+                
+                gradient_j = np.zeros(n_params)
+                f_j = self._wrapped_cost(p_plus_j)
+                
+                for i in range(n_params):
+                    p_plus_j_i = p_plus_j.copy()
+                    p_plus_j_i[i] += step_size
+                    gradient_j[i] = (self._wrapped_cost(p_plus_j_i) - f_j) / step_size
+                
+                gradients.append(gradient_j)
+            
+            # Construct Hessian from gradients
+            for i in range(n_params):
+                for j in range(n_params):
+                    H[i, j] = (gradients[j][i] - gradient_p[i]) / step_size
+        
+        # Calculate eigenvalues and eigenvectors of the Hessian
+        eigenvalues, eigenvectors = np.linalg.eigh(H)
+        
+        # Convert parameter indices to names for better interpretation
+        parameter_indices = {}
+        for i, name in enumerate(free_names):
+            if name not in parameter_indices:
+                parameter_indices[name] = []
+            parameter_indices[name].append(i)
+        
+        parameter_names = []
+        for name, indices in parameter_indices.items():
+            if len(indices) == 1:
+                parameter_names.append(name)
+            else:
+                # For array parameters, add indices
+                for idx in indices:
+                    flat_idx = idx - min(indices)
+                    param_value = self.param_dict[name]["value"]
+                    if hasattr(param_value, 'shape') and len(param_value.shape) == 2:
+                        # 2D array like control points
+                        row, col = np.unravel_index(flat_idx, param_value.shape)
+                        parameter_names.append(f"{name}[{row},{col}]")
+                    else:
+                        parameter_names.append(f"{name}[{flat_idx}]")
+        
+        self.H = H
+        self.parameter_names = parameter_names
+        self.eigenvalues = eigenvalues
+        self.eigenvectors = eigenvectors
+        
+        return H, parameter_names, eigenvalues, eigenvectors
+
+
+    def plot_hessian_correlation(self, figsize=(10, 8), cmap='RdBu_r', annotate=True):
+        """
+        Plot the correlation matrix derived from the Hessian.
+        
+        Parameters:
+        -----------
+        figsize : tuple, optional
+            Figure size
+        cmap : str, optional
+            Colormap for correlation plot
+        annotate : bool, optional
+            Whether to annotate the plot with correlation values
+        
+        Returns:
+        --------
+        tuple : (fig, ax)
+            Matplotlib figure and axis objects
+        """
+
+        
+        # Calculate Hessian and get inverse
+        if self.H is not None:
+            H = self.H
+            parameter_names = self.parameter_names
+        else:
+            H, parameter_names, _, _ = self.calculate_hessian()
+        
+        try:
+            H_inv = np.linalg.inv(H)
+        except np.linalg.LinAlgError:
+            H_inv = np.linalg.pinv(H)
+        
+        # Calculate correlation matrix
+        D = np.diag(np.sqrt(np.diag(H_inv)))
+        D_inv = np.linalg.inv(D)
+        correlation = D_inv @ H_inv @ D_inv
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=figsize)
+        im = ax.imshow(correlation, cmap=cmap, vmin=-1, vmax=1)
+        
+        # Add labels and colorbar
+        ax.set_xticks(np.arange(len(parameter_names)))
+        ax.set_yticks(np.arange(len(parameter_names)))
+        ax.set_xticklabels(parameter_names, rotation=90)
+        ax.set_yticklabels(parameter_names)
+        
+        # Colorbar
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label('Parameter Correlation')
+        
+        # Annotate with correlation values
+        if annotate:
+            for i in range(len(parameter_names)):
+                for j in range(len(parameter_names)):
+                    if abs(correlation[i, j]) > 0.1:  # Only annotate non-tiny correlations
+                        text_color = 'white' if abs(correlation[i, j]) > 0.5 else 'black'
+                        ax.text(j, i, f"{correlation[i, j]:.2f}", 
+                                ha="center", va="center", color=text_color,
+                                fontsize=6)
+        
+        ax.set_title('Parameter Correlation Matrix')
+        fig.tight_layout()
+        
+        return fig, ax

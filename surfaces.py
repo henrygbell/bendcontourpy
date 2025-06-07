@@ -4,203 +4,21 @@ from .utils.math_utils import bezier_surface, bernstein_poly, bezier_basis_chang
 from numpy import ndarray
 import matplotlib.pyplot as plt
 
-# class Surfaces:
-#     """
-#     Represents and manages crystal surfaces for bend contour analysis in TEM.
-
-#     Parameters:
-#         R (ndarray): Surface coordinates in real space with shape (num_surfaces, 3, height, width).
-#         u (ndarray): First parameter of surface parameterization.
-#         v (ndarray): Second parameter of surface parameterization.
-#         c (ndarray): Excitation error parameter.
-#         alpha (ndarray): First rotation angle in radians.
-#         beta (ndarray): Second rotation angle in radians.
-#         a0 (float): First lattice parameter in real space.
-#         b0 (float): Second lattice parameter in real space.
-#         material: Crystal structure object containing material properties.
-#         width (float, optional): Width parameter for diffraction intensity. Defaults to 2*π/4/700.
-#     """
-#     def __init__(
-#         self, 
-#         R: ndarray,
-#         u: ndarray,
-#         v: ndarray,
-#         c: ndarray,
-#         alpha: ndarray,
-#         beta: ndarray,
-#         a0: float,
-#         b0: float,
-#         material,
-#         width: float = 2*xp.pi/4/700
-#     ):
-#         """
-        
-#         """
-        
-#         if len(u.shape) == 1:
-#             self.u, self.v = xp.meshgrid(u, v)
-#         if len(u.shape) == 2:
-#             self.u = u
-#             self.v = v
-            
-
-#         self.c = c
-        
-#         self.alpha = alpha
-      
-#         self.beta = beta
-        
-#         self.x_range_0 = R[:, 0].max() - R[:, 0].min()
-#         self.y_range_0 = R[:, 1].max() - R[:, 1].min()
-        
-#         self.du = xp.abs(self.u[1,1] - self.u[0,0])
-#         self.dv = xp.abs(self.v[1,1] - self.v[0,0])
-
-#         self.a0 = a0
-#         self.b0 = b0
-
-#         self.material = material
-#         self.width = width
-#         self.set_R(R)
-    
-#     def set_width(self, width):
-#         self.width = width
-
-#     def set_R(
-#         self, 
-#         R
-#     ):
-#         if len(R.shape) == 3:
-#             self.R = R[None,:,:,:]
-#         if len(R.shape) == 4:
-#             self.R = R
-        
-#         self.get_UB()
-    
-#     def get_UB(self):
-#         r_u, r_v = xp.gradient(self.R, 
-#                                axis = (-2,-1))
-        
-#         cart_axis = 1
-        
-#         normals = -xp.cross(r_u, 
-#                             r_v, 
-#                             axis = cart_axis)
-        
-#         normals_normed = xp.einsum("...jkl,...kl->...jkl", 
-#                                    normals,
-#                                    1/xp.linalg.norm(normals, axis = cart_axis))
-
-#         a_hat = r_u/self.x_range_0/self.du
-#         b_hat = r_v/self.y_range_0/self.dv
-
-#         self.a_vec = a_hat*self.a0
-#         self.b_vec = b_hat*self.b0
-        
-#         a_len = xp.linalg.norm(self.a_vec,
-#                                axis = cart_axis)
-        
-#         b_len = xp.linalg.norm(self.b_vec,
-#                                axis = cart_axis)
-        
-#         gamma_cos = xp.einsum("...ijk,...ijk->...jk", 
-#                               a_hat, 
-#                               b_hat)
-#         det = a_len*b_len*(1 - gamma_cos**2)
-        
-#         A1_inv = xp.array(((self.b0*xp.ones_like(gamma_cos), 
-#                             -b_len*gamma_cos), 
-#                            (-self.a0*gamma_cos, a_len*xp.ones_like(gamma_cos))))/det
-        
-#         v1 = self.c*xp.array((xp.cos(self.beta), xp.cos(self.alpha)))
-        
-#         x, y = xp.einsum("ij...,j...->i...", 
-#                          A1_inv, 
-#                          v1)
-        
-#         z = xp.sqrt(self.c**2 - (x**2 * a_len**2 + y**2 * b_len**2 + x*y*a_len*b_len*gamma_cos))
-        
-#         self.c_vec = xp.einsum("i...jk,i...ljk->...ljk",
-#                           xp.array((x, y, z)),
-#                           xp.array((self.a_vec, self.b_vec, normals_normed))) 
-        
-#         V = xp.einsum("...jkl,...jkl->...kl", 
-#                       xp.cross(self.b_vec, self.c_vec, axis = cart_axis),
-#                       self.a_vec)
-
-#         UB = xp.zeros((self.R.shape[0], 3, 3, *self.R.shape[-2:]))
-        
-#         a_rec = 2*xp.pi*xp.einsum("...kl, ...jkl->...jkl", 
-#                                   1/V, 
-#                                   xp.cross(self.b_vec, self.c_vec, axis = cart_axis))
-        
-#         b_rec = 2*xp.pi*xp.einsum("...kl, ...jkl->...jkl", 
-#                                   1/V, 
-#                                   xp.cross(self.c_vec, self.a_vec, axis = cart_axis))
-        
-#         c_rec = 2*xp.pi*xp.einsum("...kl, ...jkl->...jkl",
-#                                   1/V, 
-#                                   xp.cross(self.a_vec, self.b_vec, axis = cart_axis))
-
-#         UB[:,:,0,:,:] = a_rec
-#         UB[:,:,1,:,:] = b_rec
-#         UB[:,:,2,:,:] = c_rec
-        
-#         self.UB = UB.transpose([1,2,3,4,0])
-    
-#     def test_image_axis(self, i = 0):
-#         fig, axR = plt.subplots(1,3)
-        
-#         fig.suptitle(f"self.R[{i}]")
-#         axR[0].set_title("x")
-#         axR[0].imshow(self.R[i, 0, :,:].get())
-#         axR[1].set_title("y")
-#         axR[1].imshow(self.R[i, 1, :,:].get())
-#         axR[2].set_title("z")
-#         axR[2].imshow(self.R[i, 2, :,:].get())
-        
-#         fig, ax_a = plt.subplots(1,3)
-#         fig.suptitle(f"self.a_vec[{i}]")
-#         ax_a[2].set_title("x")
-#         ax_a[0].imshow(self.a_vec[i, 0, :,:].get())
-#         ax_a[2].set_title("y")
-#         ax_a[1].imshow(self.a_vec[i, 1, :,:].get())
-#         ax_a[2].set_title("z")
-#         ax_a[2].imshow(self.a_vec[i, 2, :,:].get())
-        
-#         fig, ax_b = plt.subplots(1,3)
-#         fig.suptitle(f"self.b_vec[{i}]")
-#         ax_b[2].set_title("x")
-#         ax_b[0].imshow(self.b_vec[i, 0, :,:].get())
-#         ax_b[2].set_title("y")
-#         ax_b[1].imshow(self.b_vec[i, 1, :,:].get())
-#         ax_b[2].set_title("z")
-#         ax_b[2].imshow(self.b_vec[i, 2, :,:].get())
-        
-#         fig, ax_c = plt.subplots(1,3)
-#         fig.suptitle(f"self.c_vec[{i}]")
-#         ax_c[2].set_title("x")
-#         ax_c[0].imshow(self.c_vec[i, 0, :,:].get())
-#         ax_c[2].set_title("y")
-#         ax_c[1].imshow(self.c_vec[i, 1, :,:].get())
-#         ax_c[2].set_title("z")
-#         ax_c[2].imshow(self.c_vec[i, 2, :,:].get())
-
 class Surfaces:
     """
-    Represents and manages crystal surfaces for bend contour analysis in TEM.
+    Stores information about the film surfaces and computes the UB matrix for bend contour simulation with the Experiment class.
 
     Parameters:
         R (ndarray): Surface coordinates in real space with shape (num_surfaces, 3, height, width).
         u (ndarray): First parameter of surface parameterization.
         v (ndarray): Second parameter of surface parameterization.
         c (ndarray): Excitation error parameter.
-        a0 (float): First lattice parameter in real space.
-        b0 (float): Second lattice parameter in real space.
-        material: Crystal structure object containing material properties.
+        material (Crystal class): Crystal structure object containing material properties.
         width (float, optional): Width parameter for diffraction intensity. Defaults to 2*π/4/700.
-        dalpha (float, optional): 
+        dalpha (float, optional): tilt parameters from default defined by material 
+        dbeta (float, optional): tilt parameters from default defined by material
     """
+    
     def __init__(
         self, 
         R: ndarray,
@@ -298,11 +116,17 @@ class Surfaces:
         self.get_UB()
     
     def get_UB(self):
+        """
+        Computes the UB matrix for the surface based on the real space coordinates R.
+        """
+        
+        # gradients (tangential vectors)
         self.r_u, self.r_v = xp.gradient(self.R, 
                                axis = (-2,-1))
         
         cart_axis = 1
         
+        #compute normal, normalize
         normals = xp.cross(self.r_u, 
                             self.r_v, 
                             axis = cart_axis)
@@ -310,6 +134,8 @@ class Surfaces:
         normals_normed = xp.einsum("...jkl,...kl->...jkl", 
                                    normals,
                                    1/xp.linalg.norm(normals, axis = cart_axis))
+        
+        #normalize by reference configuration (if available)
         if self.reference_config is not None:
             self.x_hat = self.r_u/self.du/self.reference_config['x_range']
             self.y_hat = self.r_v/self.dv/self.reference_config['y_range']
@@ -320,19 +146,20 @@ class Surfaces:
             self.x_hat /= xp.linalg.norm(self.x_hat, axis = 1, keepdims = True)
             self.y_hat /= xp.linalg.norm(self.y_hat, axis = 1, keepdims = True)
         
-        z_hat = normals_normed
-        self.z_hat = z_hat
+        self.z_hat = normals_normed
         
-        T = xp.array((self.x_hat, self.y_hat, z_hat))
+        # compute frame transformation matrix T (represents the local coordinate system of each pixel)
+        T = xp.array((self.x_hat, self.y_hat, self.z_hat))
         
-        
+        # TUB matrix is the local abc lattice vectors in real space
         TUB_real = xp.einsum("ijklm,in,no->jkolm", T, self.U, self.B_real0)
 
+        #unpack
         self.a_vec = TUB_real[:,:,0,:,:]
         self.b_vec = TUB_real[:,:,1,:,:]
         self.c_vec = TUB_real[:,:,2,:,:]
         
-        if (self.dalpha != 0).any() or (self.dbeta != 0).any(): # compute c given alpha and beta if they are nonzero
+        if (self.dalpha != 0).any() or (self.dbeta != 0).any(): # compute c given alpha and beta/alpha if they are nonzero
             a_hat = self.a_vec/xp.linalg.norm(self.a_vec, axis = 1, keepdims = True)
             b_hat = self.b_vec/xp.linalg.norm(self.b_vec, axis = 1, keepdims = True)
             n_hat = self.c_vec/xp.linalg.norm(self.c_vec, axis = 1, keepdims = True)
@@ -352,28 +179,9 @@ class Surfaces:
             
             self.c_vec = self.c0*self.c_vec/xp.linalg.norm(self.c_vec, axis = 1, keepdims = True)
             
-            # # orthonormal basis e123
-            # e1 = a_hat
-            # proj = xp.einsum("ij...,ij...->i...", b_hat, e1)
-            # e2 = b_hat - proj[:,None]*e1
-            # e2 /= xp.linalg.norm(e2, axis = 1)
-            # e3 = xp.cross(e1, e2, axis = 1)
-            
-            # cross_ab_norm = xp.linalg.norm(xp.cross(a_hat, b_hat, axis = 1), axis = 1)
-            # dot_ab = xp.einsum("ijkl,ijkl->ikl", a_hat, b_hat)
-            
-            # #get c in that basis
-            # c1 = self.c0 * xp.cos(self.beta)[None]
-            # c2 = self.c0 * (xp.cos(self.alpha) - xp.cos(self.beta) * dot_ab) / cross_ab_norm
-            
-            # c3_sq = self.c0**2 - c1**2 - c2**2
-            # c3 = xp.sqrt(xp.clip(c3_sq, 0, None))
-            
-            # #back to cartesian coordinates
-            # self.c_vec =  e1 * c1 + e2 * c2 + e3 * c3
-            
             TUB_real[:,:,2,:,:] = self.c_vec
         
+        # Compute reciprocal lattice vectors in real space
         V = xp.einsum("...jkl,...jkl->...kl", 
                       xp.cross(self.b_vec, self.c_vec, axis = cart_axis),
                       self.a_vec)
@@ -392,6 +200,7 @@ class Surfaces:
                                   1/V, 
                                   xp.cross(self.a_vec, self.b_vec, axis = cart_axis))
 
+        # collect into UB matrix (used in diffraction intensity simulation)
         UB[:,:,0,:,:] = a_rec
         UB[:,:,1,:,:] = b_rec
         UB[:,:,2,:,:] = c_rec
@@ -452,6 +261,9 @@ class Surfaces:
         ax_c[2].imshow(self.c_vec[i, 2, :,:].get())
     
     def get_cps(self, cp_num):
+        """
+        Computes the best fit for a cp_num x cp_num control point grid for the surface.
+        """
         basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
 
         new_control_points = xp.zeros((cp_num, cp_num, 3))
@@ -505,14 +317,11 @@ class Bezier_Surfaces(Surfaces):
 
     Parameters:
         control_points (ndarray): Control points defining the Bézier surface shape.
-        c (ndarray): Excitation error parameter.
-        alpha (ndarray): First rotation angle in radians.
-        beta (ndarray): Second rotation angle in radians.
-        a0 (float): First lattice parameter in real space.
-        b0 (float): Second lattice parameter in real space.
         material: Crystal structure object containing material properties.
         num_samples (int): Number of points to sample in each direction.
         width (float, optional): Width parameter for diffraction intensity. Defaults to 2*π/4/700
+        U (ndarray, optional): Transformation matrix for the crystal structure. Defaults to identity matrix.
+        reference_config (optional): Reference configuration for the surface, if available. Format: {"x_range": float, "y_range": float}.
     """
     def __init__(
         self, 
