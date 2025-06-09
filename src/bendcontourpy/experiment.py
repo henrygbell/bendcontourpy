@@ -191,8 +191,8 @@ class Experiment:
         """
         Mask the intensity arrays based on the provided mask.
         """
-        self.I_bf[:,:,mask] = 0
-        self.I_df[:,mask] = 0
+        self.I_bf[:, :, mask] = 0
+        self.I_df[:, mask] = 0
     
     def get_bright_field_projected(
         self,
@@ -401,8 +401,11 @@ class Experiment:
         ax = np.array(ax).flatten()
         for i in range(num_theta):
             ax[i].imshow(self.I_bf[i_R, i].get(), vmax = 1, vmin = 0)
+            
+            ax[i].set_xticks([])
+            ax[i].set_yticks([])
             # ax[i].set_title(fr"$\theta$ = {np.round(self.rotation_angles[i]*180/np.pi, 2)}$^\circ$")
-
+            ax[i].set_title(f"{np.round(np.rad2deg(self.rotation_angles[i]),2)} degrees")
     
         
         

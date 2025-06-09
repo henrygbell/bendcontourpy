@@ -31,14 +31,6 @@ class Surfaces:
         dbeta = 0,
         reference_config = None,
     ):
-        """
-        Initialize the Surfaces class.
-
-        Parameters:
-            R (ndarray): Surface coordinates in real space with shape (num_surfaces, 3, height, width).
-            u (ndarray): First parameter of surface parameterization.
-            v (ndarray): Second parameter of surface parameterization.
-        """
         
         self.reference_config = reference_config
         
@@ -208,7 +200,12 @@ class Surfaces:
         self.UB = UB.transpose([1,2,3,4,0])
     
     def get_strain_tensor(self):
-
+        """
+        Computes the Green-Lagrange strain tensor for the surface. (no refernce)
+        
+        Returns:
+            eps (ndarray): The strain tensor with shape (num_surfaces, 2, 2, height, width).
+        """
         #bez_surf.get_strain_tensor()
         R_strain = xp.array((self.x_hat, self.y_hat))
         eps = xp.einsum("isklm, jsklm->sijlm", R_strain, R_strain)
@@ -221,8 +218,105 @@ class Surfaces:
         # get strain tensor of flat surface
         eps_flat = xp.diag(xp.ones(2))[None, :,:,None, None] #identity matrix across surface!
         return 1/2*(eps - eps_flat)
+    
+    def get_cps(self, cp_num):
+        """
+        Computes the best fit for a cp_num x cp_num control point grid for the surface.
+        
+        Parameters:
+            cp_num (int): Number of control points in each direction (creates square grid).
+        Returns:
+            new_control_points (ndarray): Control points for the Bézier surface with shape (cp_num, cp_num, 3).
+        """
+        basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
 
+        new_control_points = xp.zeros((cp_num, cp_num, 3))
+
+        for i in range(3): #xyz
+            b = self.R[0, i].flatten()
+            # print(b.shape)
+
+            A = basis_R_cp_prime
+            # print(A.shape)
+
+            xyz_new = xp.linalg.lstsq(A, b, rcond = None)[0]
+
+            new_control_points[:,:,i] = xyz_new.reshape((cp_num, cp_num))
+        return new_control_points
+
+    def updown_sample_cp(self, cp_num):
+        """
+        Down or upsample the number of control points. 
+        
+        Only works on the first surface (i=0).
+        
+        Parameters:
+            cp_num (int): Number of control points in each direction for the new Bézier surface.
+        
+        Returns:
+            new_control_points (ndarray): Control points for the new Bézier surface with shape (cp_num, cp_num, 3).
+        """
+        basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
+        # basis_R_cp = xp.array(bezier_basis_change(self.u_1d, self.v_1d, self.num_c, self.num_c))
+
+        new_control_points = xp.zeros((cp_num, cp_num, 3))
+
+        for i in range(3): #xyz
+            xyz = xp.array(self.control_points[0,:,:,i])
+            xyz_flat = xyz.flatten()
+
+            # b = basis_R_cp @ xyz_flat
+            b = self.R[0,i,:,:].flatten()
+
+            A = basis_R_cp_prime
+
+            xyz_new = xp.linalg.lstsq(A, b, rcond = None)[0]
+
+            new_control_points[:,:,i] = xyz_new.reshape((cp_num, cp_num))
+        return new_control_points
+
+    """
+    Visualization Tools
+    """
+    
+    
+    def visualize_vectors(self, i = 0, fig = None, ax = None):
+        if fig is None:
+            fig = plt.figure()
+        if ax is None:
+            ax = fig.add_subplot(projection = "3d")
+
+        scale = 1000
+
+        ax.plot_surface(self.R[i,0,:,:].get(), self.R[i,1,:,:].get(), self.R[i,2,:,:].get()*scale, alpha = 0.5)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+
+        a_vec = self.a_vec.get()
+        b_vec = self.b_vec.get()
+        c_vec = self.c_vec.get()
+
+        # c_vecs = ax.quiver(my_surfs.R[0,0,::10,::10].get(), my_surfs.R[0,1,::10,::10].get(), my_surfs.R[0,2,::10,::10].get()*1000, 
+        #                    scale*c_vec[0,0,::10,::10], scale*c_vec[0,1,::10,::10], c_vec[0,2,::10,::10], length = 1e-2, color = "blue")
+
+        b_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
+                        b_vec[0,0,5::10,5::10], b_vec[0,1,5::10,5::10], b_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "green", label = "b")
+
+        a_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
+                        a_vec[0,0,5::10,5::10], a_vec[0,1,5::10,5::10], a_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "red", label = "a")
+        
+        ax.set_xlabel(r"X ($\mu m$)")
+        ax.set_ylabel(r"Y ($\mu m$)")
+        ax.set_zlabel(r"Z ($nm$)")
+        
+        fig.legend()
+        
     def test_image_axis(self, i = 0):
+        """
+        Visualization of the surface vectors for debugging purposes.
+        """
         fig, axR = plt.subplots(1,3)
         
         fig.suptitle(f"self.R[{i}]")
@@ -259,57 +353,6 @@ class Surfaces:
         ax_c[1].imshow(self.c_vec[i, 1, :,:].get())
         ax_c[2].set_title("z")
         ax_c[2].imshow(self.c_vec[i, 2, :,:].get())
-    
-    def get_cps(self, cp_num):
-        """
-        Computes the best fit for a cp_num x cp_num control point grid for the surface.
-        """
-        basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
-
-        new_control_points = xp.zeros((cp_num, cp_num, 3))
-
-        for i in range(3): #xyz
-            b = self.R[0, i].flatten()
-            # print(b.shape)
-
-            A = basis_R_cp_prime
-            # print(A.shape)
-
-            xyz_new = xp.linalg.lstsq(A, b, rcond = None)[0]
-
-            new_control_points[:,:,i] = xyz_new.reshape((cp_num, cp_num))
-        return new_control_points
-
-    
-    def visualize_vectors(self, i = 0, fig = None, ax = None):
-
-        if fig is None:
-            fig = plt.figure()
-        if ax is None:
-            ax = fig.add_subplot(projection = "3d")
-
-        scale = 1000
-
-        ax.plot_surface(self.R[i,0,:,:].get(), self.R[i,1,:,:].get(), self.R[i,2,:,:].get()*scale, alpha = 0.5)
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-
-
-        a_vec = self.a_vec.get()
-        b_vec = self.b_vec.get()
-        c_vec = self.c_vec.get()
-
-        # c_vecs = ax.quiver(my_surfs.R[0,0,::10,::10].get(), my_surfs.R[0,1,::10,::10].get(), my_surfs.R[0,2,::10,::10].get()*1000, 
-        #                    scale*c_vec[0,0,::10,::10], scale*c_vec[0,1,::10,::10], c_vec[0,2,::10,::10], length = 1e-2, color = "blue")
-
-        b_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
-                        b_vec[0,0,5::10,5::10], b_vec[0,1,5::10,5::10], b_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "green", label = "b")
-
-        a_vecs = ax.quiver(self.R[0,0,5::10,5::10].get(), self.R[0,1,5::10,5::10].get(), self.R[0,2,5::10,5::10].get()*scale, 
-                        a_vec[0,0,5::10,5::10], a_vec[0,1,5::10,5::10], a_vec[0,2,5::10,5::10]*scale, length = 4e-2, color = "red", label = "a")
-        
-        fig.legend()
 
 class Bezier_Surfaces(Surfaces):
     """
@@ -346,6 +389,12 @@ class Bezier_Surfaces(Surfaces):
     def set_control_points(self, 
                            control_points
     ):
+        """
+        Sets new control points for the Bézier surface.
+        
+        Parameters:
+            control_points: ndarray, Control points defining the Bézier surface shape with shape (num_surfaces, num_c, num_c, 3) or (num_c, num_c, 3).
+        """
         if len(control_points.shape) == 3:
             self.control_points = control_points[None]
         elif len(control_points.shape) == 4:
@@ -387,7 +436,7 @@ class Bezier_Surfaces(Surfaces):
                                 control_points_list: ndarray,
     ):
         """
-        Sets the control points for the Bézier surface.
+        Sets the control points for the Bézier surface with a list of 1D coordinates
 
         Parameters:
             control_points_list (ndarray): List of control points defining the Bézier surface.
@@ -408,6 +457,17 @@ class Bezier_Surfaces(Surfaces):
 
 
     def updown_sample_cp(self, cp_num):
+        """
+        Down or upsample the number of control points. 
+        
+        Only works on the first surface (i=0).
+        
+        Parameters:
+            cp_num (int): Number of control points in each direction for the new Bézier surface.
+        
+        Returns:
+            new_control_points (ndarray): Control points for the new Bézier surface with shape (cp_num, cp_num, 3).
+        """
         basis_R_cp_prime = xp.array(bezier_basis_change(self.u_1d, self.v_1d, cp_num, cp_num))
         basis_R_cp = xp.array(bezier_basis_change(self.u_1d, self.v_1d, self.num_c, self.num_c))
 
@@ -417,7 +477,8 @@ class Bezier_Surfaces(Surfaces):
             xyz = xp.array(self.control_points[0,:,:,i])
             xyz_flat = xyz.flatten()
 
-            b = basis_R_cp @ xyz_flat
+            # b = basis_R_cp @ xyz_flat
+            b = self.R[0,i,:,:].flatten()
 
             A = basis_R_cp_prime
 
